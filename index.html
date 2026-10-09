@@ -213,6 +213,39 @@ dd a{color:var(--tour);font-weight:500}
 .sheet .sbtns button{flex:1;padding:11px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid var(--line);background:#fff}
 .sheet .sbtns .save{background:#1e8e4e;color:#fff;border-color:#1e8e4e}
 .sheet .sbtns .del{flex:none;color:#c62828}
+/* バス */
+#busView{flex:1;overflow:auto;min-height:0;padding:0 12px 100px}
+.bnote{background:#fff4e5;border:1px solid #f3c98b;color:#7a4b00;border-radius:10px;padding:8px 12px;font-size:12.5px;margin:10px 0 0;line-height:1.6}
+.bcard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px}
+.bcard h3{margin:0 0 8px;font-size:15px;display:flex;align-items:center;gap:8px}
+.bsel{display:flex;align-items:center;gap:6px}
+.bsel select{flex:1;min-width:0;font:inherit;font-size:15px;padding:8px 6px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+.bsel .sw{flex:none;border:1px solid var(--line);background:#fff;border-radius:9px;width:36px;height:38px;font-size:16px;cursor:pointer}
+.blab{font-size:11.5px;color:var(--sub);font-weight:700;margin:8px 0 3px}
+.res{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.trip{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px}
+.trip .t{font-size:16px;font-weight:700;font-feature-settings:"tnum";white-space:nowrap}
+.trip .ln{font-size:11.5px;color:var(--sub)}
+.trip.past{opacity:.4}
+.trip.next{border:2px solid var(--red);background:#fff6f6}
+.trip .nx{font-size:11px;font-weight:700;color:#fff;background:var(--red);border-radius:5px;padding:1px 6px;margin-left:auto;white-space:nowrap}
+.lbadge{display:inline-block;font-size:11px;font-weight:700;color:#fff;border-radius:5px;padding:1px 7px;background:var(--lc)}
+.stops{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:12px;margin:4px 0 8px}
+.stops span{background:var(--bg);border-radius:5px;padding:2px 6px}
+.stops i{font-style:normal;color:var(--sub)}
+.tt{overflow-x:auto;margin-top:6px}
+.tt table{border-collapse:collapse;font-size:12px;font-feature-settings:"tnum";white-space:nowrap}
+.tt th,.tt td{border:1px solid var(--line);padding:3px 6px;text-align:center}
+.tt th{background:#f3f1ec;text-align:left;position:sticky;left:0}
+.tt td.sat{color:#d40000;font-weight:700}
+.tt td.off{color:#ccc}
+.kv{display:grid;grid-template-columns:76px 1fr;gap:5px 10px;font-size:13px;line-height:1.55}
+.kv dt{color:var(--sub);font-size:12px}
+.kv dd{margin:0}
+.kv a{color:var(--tour);font-weight:700}
+.bstop{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:3px;background:#fff;border:2px solid #333;border-radius:8px;padding:1px 5px 1px 2px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.bstop b{font-size:13px}
+#map.ov .bstop span{display:none}
 </style>
 </head>
 <body>
@@ -225,6 +258,7 @@ dd a{color:var(--tour);font-weight:500}
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" data-tab="find" aria-selected="true">さがす</button>
       <button class="tab" role="tab" data-tab="plan" aria-selected="false">スケジュール<span class="n" id="plancount" hidden></span></button>
+      <button class="tab" role="tab" data-tab="bus" aria-selected="false">🚌 バス・交通</button>
     </div>
     <div id="findView">
     <div class="filters">
@@ -255,6 +289,7 @@ dd a{color:var(--tour);font-weight:500}
     <div id="list"></div>
     </div>
     <div id="planView" hidden></div>
+    <div id="busView" hidden></div>
     <div id="detail"></div>
   </aside>
   <div id="map"></div>
@@ -721,8 +756,11 @@ function setTab(tab) {
   document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
   document.getElementById('findView').hidden = tab !== 'find';
   $plan.hidden = tab !== 'plan';
+  $bus.hidden = tab !== 'bus';
   if ($detail.classList.contains('open')) closeDetail();
   renderPlan();
+  if (tab === 'bus') { renderBus(); drawBus(); map.fitBounds(L.latLngBounds(['hm', 'nk', 'tg', 'kw'].map(id => [BSTOPS[id].lat, BSTOPS[id].lng])), { padding: [30, 30] }); }
+  else drawBus();
   if (tab === 'plan') {
     const stops = dayStops(S.pday);
     if (stops.length) map.fitBounds(L.latLngBounds([STAY, ...stops.map(s => s.tg.e)].map(x => [x.lat, x.lng])), { padding: [40, 40], maxZoom: 15 });
@@ -730,8 +768,169 @@ function setTab(tab) {
 }
 document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
 
+// ===== RENEWシャトルバス（公式 交通ページの時刻表 2026/10 版）=====
+// 時刻の末尾 * は「土曜のみ運行」（時刻表の赤字）
+const BSTOPS = {
+  nk: { n: '西村金属（めがねのまち）', lat: 35.9809833, lng: 136.1793274 },
+  sb: { n: '鯖江駅', lat: 35.9429344, lng: 136.1881387 },
+  kw: { n: 'うるしの里会館（河和田案内所）', lat: 35.9532223, lng: 136.2742756 },
+  im: { n: '和紙の里（今立案内所）', lat: 35.9101258, lng: 136.2456836 },
+  tf: { n: '越前たけふ駅', lat: 35.8958456, lng: 136.1980454 },
+  tk: { n: '武生駅', lat: 35.9031218, lng: 136.1704604 },
+  hm: { n: '刃物の里（越前千代鶴の館）', lat: 35.8757928, lng: 136.1463849 },
+  fk: { n: '福井駅', lat: 36.0610349, lng: 136.2241267 },
+  tg: { n: '越前陶芸村（越前町案内所）', lat: 35.9337069, lng: 136.0613933 },
+};
+const BORDER = ['nk', 'sb', 'kw', 'im', 'tf', 'tk', 'hm', 'tg', 'fk'];
+const tr = (ids, rows) => rows.map(r => ids.map((id, i) => [id, ...(Array.isArray(r[i]) ? r[i] : [r[i], r[i]])]));
+const LINES = [
+  { id: 'es', n: '越前鯖江線', c: '#e00012', fare: '500円／1回（現金のみ）', cap: '13名(1台)/23名(2台)', trips: [
+    ...tr(['hm', 'tk', 'tf', 'im', 'kw', 'sb', 'nk'], [
+      ['-', ['-', '9:30'], ['9:45', '9:50'], ['10:00', '10:05'], ['10:20', '10:25'], ['10:45', '10:50'], '11:05'],
+      ['10:20', ['10:35', '10:40'], ['10:55', '11:00'], ['11:10', '11:15'], ['11:30', '12:00'], ['12:20', '12:25'], '12:40'],
+      ['11:20', ['11:35', '11:40'], ['11:55', '12:00'], ['12:10', '12:15'], ['12:30', '13:00'], ['13:20', '13:25'], '13:40'],
+      ['13:35', ['13:50', '13:55'], ['14:10', '14:15'], ['14:25', '14:30'], ['14:45', '14:50'], ['15:10', '15:15'], '15:30'],
+      ['15:35', ['15:50', '15:55'], ['16:10', '16:15'], ['16:25', '16:30'], ['16:45', '16:50'], ['17:10', '17:15'], '17:30'],
+      ['16:10', ['16:25', '16:30'], ['16:45', '16:50'], ['17:00', '17:05'], ['17:20', '17:25'], ['17:45', '17:50*'], '18:05*'],
+      ['18:00*', ['18:15*', '18:20*'], ['18:35*', '18:40*'], ['18:50*', '18:55*'], ['19:10*', '19:15*'], ['19:35*', '-'], '-'],
+    ]).map(s => ({ dir: '刃物の里 → 西村金属', s })),
+    ...tr(['nk', 'sb', 'kw', 'im', 'tf', 'tk', 'hm'], [
+      ['-', ['-', '-'], ['-', '-'], ['-', '-'], ['-', '9:40'], ['9:55', '10:00'], '10:15'],
+      ['-', ['-', '9:40'], ['10:00', '10:05'], ['10:20', '10:25'], ['10:35', '10:40'], ['10:55', '11:00'], '11:15'],
+      ['11:10', ['11:25', '11:30'], ['11:50', '11:55'], ['12:10', '12:15'], ['12:25', '12:30'], ['12:45', '12:50'], '13:05'],
+      ['12:45', ['13:00', '13:05'], ['13:25', '13:55'], ['14:10', '14:15'], ['14:25', '14:30'], ['14:45', '14:50'], '15:05'],
+      ['13:45', ['14:00', '14:05'], ['14:25', '14:30'], ['14:45', '14:50'], ['15:00', '15:05'], ['15:20', '15:25'], '15:40'],
+      ['15:35', ['15:50', '15:55'], ['16:15', '16:45'], ['17:00', '17:05'], ['17:15', '17:20'], ['17:35', '17:40*'], '17:55*'],
+      ['17:35', ['17:50', '17:55*'], ['18:15*', '18:20*'], ['18:35*', '18:40*'], ['18:50*', '18:55*'], ['19:10*', '-'], '-'],
+      ['18:10*', ['18:25*', '18:30*'], ['18:50*', '18:55*'], ['19:10*', '19:15*'], ['19:25*', '19:30*'], ['19:45*', '-'], '-'],
+    ]).map(s => ({ dir: '西村金属 → 刃物の里', s })),
+  ] },
+  { id: 'fk', n: '福井駅線', c: '#b8001f', fare: '500円／1回（現金のみ）', cap: '27名(1台)', trips: tr(['fk', 'kw', 'fk'], [
+      ['9:20', ['10:00', '10:05'], '10:45'], ['10:50', ['11:30', '12:05'], '12:45'], ['12:50', ['13:30', '13:35'], '14:15'],
+      ['14:20', ['15:00', '15:35'], '16:15'], ['16:20', ['17:00', '17:05'], '17:45'], ['17:50*', ['18:30*', '18:35*'], '19:15*'],
+    ]).map(s => ({ dir: '福井駅 → 河和田 → 福井駅', s })) },
+  { id: 'tg', n: '越前陶芸村 無料バス', c: '#4f9d1e', fare: '無料', cap: '13名(1台)', trips: [
+    ...tr(['kw', 'sb', 'tg'], [['-', '9:30', '9:55'], ['10:55', '11:20', '11:45'], ['13:40', '14:05', '14:30'], ['15:55', '16:20', '16:45']]).map(s => ({ dir: '河和田 → 陶芸村', s })),
+    ...tr(['tg', 'sb', 'kw'], [['10:00', '10:30', '10:50'], ['12:45', '13:15', '13:35'], ['15:00', '15:30', '15:50'], ['16:50', '17:15', '-']]).map(s => ({ dir: '陶芸村 → 河和田', s })),
+  ] },
+];
+// 時刻 → 分（その曜日に走らないなら null）
+const bt = (x, day) => !x || x === '-' || (x.endsWith('*') && day !== 10) ? null : toMin(x.replace('*', '').padStart(5, '0'));
+const fmtT = m => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+function legs(from, to, day) {
+  const out = [];
+  for (const L of LINES) for (const trp of L.trips) {
+    const s = trp.s;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i][0] !== from) continue;
+      const dep = bt(s[i][2], day); if (dep == null) continue;
+      for (let j = i + 1; j < s.length; j++) if (s[j][0] === to) { const arr = bt(s[j][1], day); if (arr != null) out.push({ L, dir: trp.dir, dep, arr }); break; }
+    }
+  }
+  return out.sort((a, b) => a.dep - b.dep);
+}
+function searchBus(from, to, day) {
+  const direct = legs(from, to, day).map(x => ({ dep: x.dep, arr: x.arr, parts: [{ ...x, from, to }] }));
+  // 直通がない時間帯も含めて、1回乗り換え（乗換3分以上）も探す
+  const via = [];
+  for (const t of Object.keys(BSTOPS)) {
+    if (t === from || t === to) continue;
+    const a = legs(from, t, day), b = legs(t, to, day);
+    for (const x of a) { const y = b.find(y => y.dep >= x.arr + 3 && y.L !== x.L); if (y) via.push({ dep: x.dep, arr: y.arr, parts: [{ ...x, from, to: t }, { ...y, from: t, to }] }); }
+  }
+  const all = direct.concat(via.filter(v => !direct.some(d => d.dep <= v.dep && d.arr <= v.arr)));
+  // 同じ出発時刻なら早く着く方だけ、他の便より出発が遅くて到着も遅いものは除く
+  const best = [];
+  for (const r of all.sort((a, b) => a.dep - b.dep || a.arr - b.arr)) {
+    if (best.some(o => o.dep >= r.dep && o.arr <= r.arr && o !== r)) continue;
+    for (let k = best.length - 1; k >= 0; k--) if (best[k].dep <= r.dep && best[k].arr >= r.arr) best.splice(k, 1);
+    best.push(r);
+  }
+  return best.sort((a, b) => a.dep - b.dep);
+}
+const BUSDAY0 = TODAY === 11 ? 11 : 10;
+const SB = { day: BUSDAY0, from: 'kw', to: 'sb', openTT: null };
+const $bus = document.getElementById('busView');
+const nowMin = () => { const n = new Date(); return n.getFullYear() === 2026 && n.getMonth() === 9 && n.getDate() === SB.day ? n.getHours() * 60 + n.getMinutes() : null; };
+function ttTable(L, dir, day) {
+  const trips = L.trips.filter(x => x.dir === dir), ids = trips[0].s.map(x => x[0]);
+  let h = `<div class="tt"><table><tr><th>${esc(dir)}</th>${trips.map(() => '<td style="background:#f3f1ec"></td>').join('')}</tr>`;
+  ids.forEach((id, i) => {
+    const cell = x => { if (!x || x === '-') return '<td class="off">-</td>'; const sat = x.endsWith('*'); return `<td class="${sat ? (day === 10 ? 'sat' : 'off') : ''}">${x.replace('*', '')}</td>`; };
+    const same = trips.every(tp => tp.s[i][1] === tp.s[i][2]);
+    if (same) h += `<tr><th>${esc(BSTOPS[id].n.replace(/（.*/, ''))}</th>${trips.map(tp => cell(tp.s[i][2])).join('')}</tr>`;
+    else {
+      if (i > 0) h += `<tr><th>${esc(BSTOPS[id].n.replace(/（.*/, ''))} 着</th>${trips.map(tp => cell(tp.s[i][1])).join('')}</tr>`;
+      if (i < ids.length - 1) h += `<tr><th>${esc(BSTOPS[id].n.replace(/（.*/, ''))} 発</th>${trips.map(tp => cell(tp.s[i][2])).join('')}</tr>`;
+    }
+  });
+  return h + '</table></div>';
+}
+function renderBus() {
+  const day = SB.day, nm = nowMin();
+  const opt = sel => BORDER.map(id => `<option value="${id}" ${id === sel ? 'selected' : ''}>${esc(BSTOPS[id].n)}</option>`).join('');
+  let h = '<div class="pdays">' + [10, 11].map(d => `<button class="pday" data-bday="${d}" aria-pressed="${day === d}">${d}日（${DOW[d]}）<small>${d === 10 ? '夜の便あり' : ''}</small></button>`).join('') + '</div>';
+  if (TODAY === 9) h += `<div class="bnote">シャトルバスは <b>10日（土）・11日（日）のみ</b> の運行です。今日（9日）はRENEWタクシーやレンタサイクルを使ってください（下に案内あり）。</div>`;
+  const rs = SB.from === SB.to ? [] : searchBus(SB.from, SB.to, day);
+  const nextI = nm == null ? -1 : rs.findIndex(r => r.dep >= nm);
+  h += `<div class="bcard"><h3>🚌 乗り場から時刻を探す</h3>
+    <div class="blab">乗る</div><div class="bsel"><select id="bFrom">${opt(SB.from)}</select></div>
+    <div class="blab">降りる</div><div class="bsel"><select id="bTo">${opt(SB.to)}</select><button class="sw" id="bSwap" title="入れ替え">⇅</button></div>
+    <div class="res">${SB.from === SB.to ? '<div class="pempty">乗る場所と降りる場所を別にしてください。</div>' : rs.length ? rs.map((r, i) => {
+      const cls = nm != null && r.dep < nm ? ' past' : i === nextI ? ' next' : '';
+      const ln = r.parts.map(p => `<span class="lbadge" style="--lc:${p.L.c}">${p.L.n}</span>`).join(' → ');
+      const tx = r.parts.length > 1 ? `<div class="ln">${esc(BSTOPS[r.parts[0].to].n.replace(/（.*/, ''))}で乗換（${fmtT(r.parts[0].arr)}着 → ${fmtT(r.parts[1].dep)}発）</div>` : '';
+      return `<div class="trip${cls}"><div><div class="t">${fmtT(r.dep)} → ${fmtT(r.arr)}</div><div class="ln">${ln}・${r.arr - r.dep}分</div>${tx}</div>${i === nextI ? '<span class="nx">次の便</span>' : ''}</div>`;
+    }).join('') : '<div class="pempty">この区間を結ぶ便はありません（乗換1回まで検索）。RENEWタクシーも検討してください。</div>'}</div>
+    <p class="note" style="padding:8px 0 0">※ 赤字（土曜のみ）の便は11日は表示しません。運行状況で時刻が変わることがあります。満席の場合は次の便へ。</p></div>`;
+  for (const L of LINES) {
+    const dirs = [...new Set(L.trips.map(x => x.dir))];
+    const ids = [...new Set(L.trips.flatMap(x => x.s.map(y => y[0])))];
+    h += `<div class="bcard"><h3><span class="lbadge" style="--lc:${L.c}">${L.n}</span><small style="font-weight:500;font-size:12px;color:var(--sub)">${L.fare}・定員${L.cap}</small></h3>
+      <div class="stops">${(L.id === 'es' ? ['hm', 'tk', 'tf', 'im', 'kw', 'sb', 'nk'] : L.id === 'fk' ? ['fk', 'kw'] : ['kw', 'sb', 'tg']).map(id => `<span>${esc(BSTOPS[id].n.replace(/（.*/, ''))}</span>`).join('<i>⇄</i>')}</div>
+      ${dirs.map(d => `<button class="mini" data-tt="${L.id}|${esc(d)}">${SB.openTT === L.id + '|' + d ? '▾' : '▸'} 時刻表：${esc(d)}</button>${SB.openTT === L.id + '|' + d ? ttTable(L, d, day) : ''}`).join(' ')}
+    </div>`;
+  }
+  h += `<div class="bcard"><h3>🚕 RENEWタクシー（最大1,500円引き）</h3><dl class="kv">
+    <dt>利用時間</dt><dd>9日 8:00〜20:00／10日 8:00〜20:00／11日 8:00〜18:00</dd>
+    <dt>乗降場所</dt><dd>参加企業121社・3案内所・鯖江市/越前市の駅・3市町の宿泊施設（めがねハウスもOK）。範囲外は使えません</dd>
+    <dt>使い方</dt><dd>①<a href="https://app.pass.ryde-go.com/XJHv?deep_link_value=products/X987XQSGQV8Q" target="_blank" rel="noopener">RYDE PASSで割引券を取得（0円）↗</a><br>②下のタクシー会社に電話で配車<br>③乗車後、車内の二次元コードを読んで割引</dd>
+    <dt>鯖江駅・河和田・神明</dt><dd>鯖江タクシー <a href="tel:0778512822">0778-51-2822</a><br>相互タクシー <a href="tel:0778510238">0778-51-0238</a></dd>
+    <dt>武生駅・武生</dt><dd>武生タクシー <a href="tel:0778220012">0778-22-0012</a><br>小松タクシー <a href="tel:0778220585">0778-22-0585</a><br>ヤマトタクシー <a href="tel:0778420860">0778-42-0860</a></dd>
+    <dt>今立</dt><dd>ヤマトタクシー <a href="tel:0778420860">0778-42-0860</a></dd>
+    <dt>越前町</dt><dd>アサヒタクシー <a href="tel:0778340037">0778-34-0037</a></dd>
+    </dl><p class="note" style="padding:8px 0 0">河和田・今立案内所にはタクシーターミナルあり。めがねハウスは河和田エリアなので、鯖江タクシーか相互タクシーが近いです。</p></div>`;
+  h += `<div class="bcard"><h3>🚲 レンタサイクル</h3><dl class="kv">
+    <dt>場所</dt><dd>河和田案内所（tokyobikeあり）・今立案内所・越前町案内所</dd>
+    <dt>時間</dt><dd>10:00〜17:00（最終受付16:00）・台数限定</dd>
+    <dt>料金</dt><dd>500円／3時間（借りた場所に返却）</dd></dl></div>`;
+  h += `<p class="note">出典：<a href="https://renew-fukui.com/transportation/" target="_blank" rel="noopener">RENEW公式「当日の移動手段」</a>（2026/10/9取得）。最新情報は公式・各停留所の看板で確認してください。</p>`;
+  $bus.innerHTML = h;
+  const fr = document.getElementById('bFrom'), to = document.getElementById('bTo');
+  fr.onchange = () => { SB.from = fr.value; renderBus(); drawBus(); };
+  to.onchange = () => { SB.to = to.value; renderBus(); drawBus(); };
+  document.getElementById('bSwap').onclick = () => { [SB.from, SB.to] = [SB.to, SB.from]; renderBus(); };
+}
+// 地図：バス停は常に表示、バスタブでは路線を線で表示
+const busLayer = L.layerGroup().addTo(map), busLineLayer = L.layerGroup().addTo(map);
+for (const [id, s] of Object.entries(BSTOPS)) {
+  L.marker([s.lat, s.lng], { icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="bstop" style="margin-left:-34px;margin-top:6px"><b>🚌</b><span>${esc(s.n.replace(/（.*/, ''))}</span></div>` }), zIndexOffset: -100 })
+    .on('click', () => { SB.from = id; if (SB.to === id) SB.to = id === 'kw' ? 'sb' : 'kw'; setTab('bus'); })
+    .bindTooltip(`${s.n}（タップで時刻検索）`, { className: 'tip', direction: 'top', offset: [-34, -6] }).addTo(busLayer);
+}
+function drawBus() {
+  busLineLayer.clearLayers();
+  if (S.tab !== 'bus') return;
+  const paths = { es: ['hm', 'tk', 'tf', 'im', 'kw', 'sb', 'nk'], fk: ['fk', 'kw'], tg: ['kw', 'sb', 'tg'] };
+  for (const ln of LINES) L.polyline(paths[ln.id].map(id => [BSTOPS[id].lat, BSTOPS[id].lng]), { color: ln.c, weight: 4, opacity: .75, dashArray: ln.id === 'tg' ? '8 6' : null }).bindTooltip(ln.n, { className: 'tip', sticky: true }).addTo(busLineLayer);
+}
+
 // events
 document.addEventListener('click', ev => {
+  const bd = ev.target.closest('[data-bday]');
+  if (bd) { SB.day = +bd.dataset.bday; renderBus(); return; }
+  const tt = ev.target.closest('[data-tt]');
+  if (tt) { SB.openTT = SB.openTT === tt.dataset.tt ? null : tt.dataset.tt; renderBus(); return; }
   const ad = ev.target.closest('[data-add]');
   if (ad) { ev.stopPropagation(); openSheet(newPlan(ad.dataset.add, ad.dataset.ref)); return; }
   const ed = ev.target.closest('[data-edit]');
